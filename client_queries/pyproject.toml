@@ -1,0 +1,8 @@
+[project]
+name = "plume-client-queries"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pyspark-client==4.3.0"]
+
+[tool.uv]
+package = false   # it's just scripts; don't try to build/install a package

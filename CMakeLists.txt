@@ -9,6 +9,7 @@ find_package(protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(Arrow CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(absl CONFIG REQUIRED)
 
 add_subdirectory(proto)
 add_subdirectory(core)

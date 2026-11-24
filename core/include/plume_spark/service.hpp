@@ -1,6 +1,8 @@
 #pragma once
 #include <spark/connect/base.grpc.pb.h>
 
+#include <plume_spark/session_manager.hpp>
+
 namespace plume_spark {
     class SparkConnectServiceImpl final : public ::spark::connect::SparkConnectService::Service {
     public:
@@ -19,5 +21,8 @@ namespace plume_spark {
         grpc::Status ReleaseExecute(grpc::ServerContext *ctx,
                                     const ::spark::connect::ReleaseExecuteRequest *req,
                                     ::spark::connect::ReleaseExecuteResponse *resp) override;
+
+    private:
+        SessionManager session_manager_;
     };
 } // namespace plume_spark
