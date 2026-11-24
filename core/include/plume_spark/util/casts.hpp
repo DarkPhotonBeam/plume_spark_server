@@ -4,8 +4,19 @@
 #include <arrow/api.h>
 #include <arrow/io/memory.h>
 #include <arrow/ipc/writer.h>
+#include <grpcpp/support/status.h>
+#include <absl/status/status.h>
+#include <google/protobuf/message.h>
 
 namespace plume_spark::util {
+    template<class... Ts>
+    struct overloaded : Ts... {
+        using Ts::operator()...;
+    };
+
+    template <class... Ts>
+    overloaded(Ts...) -> overloaded<Ts...>;
+
     inline std::string msg_to_text(const google::protobuf::Message &m) {
         std::string out;
         google::protobuf::TextFormat::Printer p;

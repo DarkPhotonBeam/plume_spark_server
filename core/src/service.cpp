@@ -5,7 +5,9 @@
 
 #include "plume_spark/config_defaults.hpp"
 #include "../include/plume_spark/util/uuid.hpp"
+#include "plume_spark/ast_builder.hpp"
 #include "plume_spark/util/casts.hpp"
+#include <plume_spark/ast/format.hpp>
 
 namespace plume_spark {
     namespace sc = ::spark::connect;
@@ -22,6 +24,15 @@ namespace plume_spark {
         const std::string op_id = req->has_operation_id() ? req->operation_id() : util::generate_uuid_v4();
 
         spdlog::debug("ExecutePlanRequest:\n{}", util::msg_to_text(*req));
+
+        if (!req->has_plan() || !req->plan().has_root()) {
+            return grpc::Status::OK;
+        }
+
+        auto &root = req->plan().root();
+
+        ast::RelPtr ast = build_from_proto(root);
+        spdlog::debug("tree:\n{}", *ast);
 
         auto make_response = [&] {
             sc::ExecutePlanResponse r;
@@ -104,7 +115,7 @@ namespace plume_spark {
                 return grpc::Status::OK;
             }
             case sc::ConfigRequest_Operation::kGet: {
-                spdlog::debug("ConfigOperation GET {}", util::msg_to_text(op.get()));
+                spdlog::debug("ConfigOperation GET, keys:\n{}", util::msg_to_text(op.get()));
                 for (const auto &k : op.get().keys()) {
                     add_pair(k, sess.get_config(k));
                 }
