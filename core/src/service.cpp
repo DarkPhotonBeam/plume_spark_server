@@ -45,19 +45,13 @@ namespace plume_spark {
         }
         auto &sess = **s;
 
-        std::lock_guard lock(sess.mu);
 
         res->set_session_id(req->session_id());
         res->set_server_side_session_id(sess.server_session_id);
 
         spdlog::debug("ConfigRequest:\n{}", util::msg_to_text(*req));
 
-        auto lookup = [&](const std::string& key) -> const std::string* {
-            const auto it = sess.config.find(key);
-            return it == sess.config.end() ? spark_config_default(key) : &it->second;
-        };
-
-        auto add_pair = [&](const std::string &key, const std::string* value) {
+        auto add_pair = [&](const std::string &key, const std::optional<std::string> &value) {
             auto *p = res->add_pairs();
             p->set_key(key);
             if (value) p->set_value(*value);
@@ -65,21 +59,40 @@ namespace plume_spark {
 
         auto &op = req->operation();
         switch (op.op_type_case()) {
-            case spark::connect::ConfigRequest_Operation::kSet:
+            case spark::connect::ConfigRequest_Operation::kSet: {
                 spdlog::debug("ConfigOperation SET");
-                break;
-            case spark::connect::ConfigRequest_Operation::kGet:
-                spdlog::debug("ConfigOperation GET");
+                std::vector<std::pair<std::string, std::string>> pairs;
+                pairs.reserve(op.set().pairs_size());
+                for (const auto &kv : op.set().pairs()) {
+                    if (kv.has_value()) pairs.emplace_back(kv.key(), kv.value());
+                }
+                sess.set_configs(pairs);
+                return grpc::Status::OK;
+            }
+            case spark::connect::ConfigRequest_Operation::kGet: {
+                spdlog::debug("ConfigOperation GET {}", util::msg_to_text(op.get()));
                 for (const auto &k : op.get().keys()) {
-                    add_pair(k, lookup(k));
+                    add_pair(k, sess.get_config(k));
                 }
                 return grpc::Status::OK;
-            case spark::connect::ConfigRequest_Operation::kGetWithDefault:
+            }
+            case spark::connect::ConfigRequest_Operation::kGetWithDefault: {
                 spdlog::debug("ConfigOperation GET_WITH_DEFAULT");
-                break;
-            case spark::connect::ConfigRequest_Operation::kGetOption:
+                for (const auto &kv : op.get_with_default().pairs()) {
+                    auto v = sess.get_config(kv.key());
+                    if (!v && kv.has_value()) v = kv.value();
+                    add_pair(kv.key(), v);
+                }
+                return grpc::Status::OK;
+            }
+            case spark::connect::ConfigRequest_Operation::kGetOption: {
                 spdlog::debug("ConfigOperation GET_OPTION");
+                for (const auto &k : op.get_option().keys()) {
+                    add_pair(k, sess.get_config(k));
+                }
+                return grpc::Status::OK;
                 break;
+            }
             case spark::connect::ConfigRequest_Operation::kGetAll:
                 spdlog::debug("ConfigOperation GET_ALL");
                 break;
@@ -91,7 +104,7 @@ namespace plume_spark {
                 break;
             case spark::connect::ConfigRequest_Operation::OP_TYPE_NOT_SET:
                 spdlog::debug("ConfigOperation OP_TYPE_NOT_SET");
-                break;
+                return {grpc::StatusCode::INVALID_ARGUMENT, "ConfigRequest without operation"};
         }
 
         return {grpc::StatusCode::UNIMPLEMENTED, "Config not implemented yet"};
