@@ -3,7 +3,7 @@
 #include <unordered_map>
 #include <absl/status/statusor.h>
 #include <plume_spark/session.hpp>
-#include <plume_spark/uuid.hpp>
+#include <plume_spark/util/uuid.hpp>
 
 namespace plume_spark {
     template<typename R>
@@ -21,7 +21,7 @@ namespace plume_spark {
 
         template <SessionRequest Req>
         absl::StatusOr<std::shared_ptr<Session>> resolve(const Req &req) {
-            if (!is_valid_uuid(req.session_id())) {
+            if (!util::is_valid_uuid(req.session_id())) {
                 return absl::InvalidArgumentError("INVALID_HANDLE.FORMAT");
             }
             auto s = get_or_create(req.user_context().user_id(), req.session_id());

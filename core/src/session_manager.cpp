@@ -1,5 +1,5 @@
 #include <plume_spark/session_manager.hpp>
-#include <plume_spark/uuid.hpp>
+#include <../include/plume_spark/util/uuid.hpp>
 
 namespace {
 
@@ -15,7 +15,7 @@ namespace plume_spark {
         if (res) {
             return res;
         }
-        res = std::make_shared<Session>(user_id, session_id, generate_uuid_v4());
+        res = std::make_shared<Session>(user_id, session_id, util::generate_uuid_v4());
         return res;
     }
 

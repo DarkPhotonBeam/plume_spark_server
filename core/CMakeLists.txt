@@ -1,8 +1,8 @@
 add_library(plume_spark_core
         src/service.cpp
-        src/uuid.cpp
         src/session_manager.cpp
         src/config_defaults.cpp
+        src/util/uuid.cpp
 )
 add_library(plume_spark::core ALIAS plume_spark_core)
 
