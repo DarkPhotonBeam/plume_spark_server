@@ -31,7 +31,10 @@ namespace plume_spark {
 
         auto &root = req->plan().root();
 
-        ast::RelPtr ast = build_from_proto(root);
+        AstBuilder ast_builder;
+
+        ast::RelPtr ast = ast_builder.build(root);;
+        spdlog::debug("built ast");
         spdlog::debug("tree:\n{}", *ast);
 
         auto make_response = [&] {

@@ -11,4 +11,4 @@ src = sys.argv[1] if len(
 spark = session()
 df = spark.read.parquet(src)
 print(df.filter(F.col("is_priority") & (F.col("amount") >= 50.0)).select(
-    "order_id", "amount", "status", (F.col("amount") + 100).alias("offset_amount")).show())
+    "order_id", "amount", "status").show())

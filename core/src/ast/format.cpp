@@ -28,6 +28,12 @@ namespace plume_spark::ast {
                 case BinOp::Add: return "+";
                 case BinOp::Eq:  return "=";
                 case BinOp::And: return "AND";
+                case BinOp::Gt: return ">";
+                case BinOp::Gte: return ">=";
+                case BinOp::Lt: return "<";
+                case BinOp::Lte: return "<=";
+                case BinOp::Neq: return "!=";
+                case BinOp::Mul: return "*";
             }
             return "?";
         }
@@ -62,7 +68,7 @@ namespace plume_spark::ast {
                 },
                 [](const Read &rd) -> NodeView {
                     auto cols = join(rd.output, [](const Attribute &a) {
-                        return fmt::format("{}:{}", attr(a), spark_type_name(a.type));
+                        return fmt::format("{}:{}", attr(a), a.type);
                     });
                     auto paths = join(rd.paths, [](const std::string &p) { return fmt::format("{:?}", p); });
                     return {fmt::format("Read {} [{}] paths=[{}]", rd.format, cols, paths), {}};
@@ -161,6 +167,7 @@ namespace plume_spark::ast {
             [](const Binary &b) {
                 return fmt::format("({} {} {})", to_string(b.lhs), symbol(b.op), to_string(b.rhs));
             },
+            [](const Attribute &a) { return fmt::format("{}#{}", a.name, a.id.value); },
         }, e->node);
     }
 

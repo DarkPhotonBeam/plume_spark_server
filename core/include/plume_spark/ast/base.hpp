@@ -72,7 +72,7 @@ namespace plume_spark::ast {
     struct Attribute {
         ColumnId id;
         std::string name;
-        spark::connect::DataType type;
+        DataType type;
         bool nullable;
     };
 
@@ -86,7 +86,7 @@ namespace plume_spark::ast {
     };
 
     struct Expr {
-        std::variant<Literal, ColumnRef, Binary, UnresolvedAttribute> node;
+        std::variant<Literal, ColumnRef, Binary, UnresolvedAttribute, Attribute> node;
     };
 
     struct NamedExpr {

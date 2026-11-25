@@ -1,0 +1,4 @@
+[submodule "third_party/plume"]
+	path = third_party/plume
+	url = https://github.com/eth-easl/plume.git
+	branch = duckdb_extension

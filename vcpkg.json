@@ -7,7 +7,9 @@
     "abseil",
     "arrow",
     "spdlog",
-    "gtest"
+    "gtest",
+    "cpr",
+    "nlohmann-json"
   ],
   "builtin-baseline": "5347f8415b82e38584389ec58e225f752dbf7b16"
 }
