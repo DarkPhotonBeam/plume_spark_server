@@ -23,6 +23,10 @@ namespace plume_spark {
                                     ::spark::connect::ReleaseExecuteResponse *resp) override;
 
     private:
+        grpc::Status execute_plan_impl(grpc::ServerContext *ctx,
+                                                      const ::spark::connect::ExecutePlanRequest *req,
+                                                      grpc::ServerWriter<::spark::connect::ExecutePlanResponse> *writer);
+
         SessionManager session_manager_;
     };
 } // namespace plume_spark

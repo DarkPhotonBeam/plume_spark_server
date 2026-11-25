@@ -8,7 +8,7 @@
 namespace plume_spark {
     namespace sc = ::spark::connect;
 
-    ast::Literal AstBuilder::build_lit_(const sc::Expression_Literal &lit) {
+    ast::Literal AstBuilder::build_lit(const sc::Expression_Literal &lit) {
         switch (lit.literal_type_case()) {
             case spark::connect::Expression_Literal::kNull:
                 break;
@@ -64,7 +64,7 @@ namespace plume_spark {
         return ast::int32_lit(0); // todo: error handling instead of default return
     }
 
-    absl::StatusOr<const ResolvedDataSource&> AstBuilder::add_datasource_(const std::string &name, const std::string &format, const arrow::Schema &schema) {
+    absl::StatusOr<const ResolvedDataSource&> AstBuilder::add_datasource_(const std::string &name, const std::string &format, std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src, const arrow::Schema &schema) {
         ResolvedDataSource src;
         spdlog::debug("add {} datasource {}", format, name);
         for (auto &field : schema.fields()) {
@@ -84,6 +84,8 @@ namespace plume_spark {
         }
         src.name = name;
         src.format = format;
+        src.plume_src = std::move(plume_src);
+        src.arrow_schema = std::make_shared<arrow::Schema>(schema);
         resolved_data_sources_.push_back(src);
         return resolved_data_sources_.back();
     }
@@ -96,11 +98,11 @@ namespace plume_spark {
         return std::nullopt;
     }
 
-    ast::ExprPtr AstBuilder::build_expr_(const sc::Expression &exp) {
+    ast::ExprPtr AstBuilder::build_expr(const sc::Expression &exp) {
         switch (exp.expr_type_case()) {
             case spark::connect::Expression::kLiteral: {
                 auto &lit = exp.literal();
-                return std::make_unique<ast::Expr>(build_lit_(lit));
+                return std::make_unique<ast::Expr>(build_lit(lit));
             }
             case spark::connect::Expression::kUnresolvedAttribute: {
                 auto &ua = exp.unresolved_attribute();
@@ -120,8 +122,8 @@ namespace plume_spark {
                 auto n_args = uf.arguments_size();
                 if (n_args == 2) {
                     // binary
-                    auto lhs = build_expr_(uf.arguments().Get(0));
-                    auto rhs = build_expr_(uf.arguments().Get(1));
+                    auto lhs = build_expr(uf.arguments().Get(0));
+                    auto rhs = build_expr(uf.arguments().Get(1));
                     ast::BinOp op = ast::BinOp::And;
                     if (name == "and") {
                         op = ast::BinOp::And;
@@ -185,10 +187,15 @@ namespace plume_spark {
 
 
     ast::RelPtr AstBuilder::build(const spark::connect::Relation &root) {
-        return build_rel_(root);
+        return build_rel(root);
     }
 
-    ast::RelPtr AstBuilder::build_rel_(const sc::Relation &rel) {
+    // todo: returning reference could cause dangling references
+    const std::vector<ResolvedDataSource> &AstBuilder::get_resolved_data_sources() {
+        return resolved_data_sources_;
+    }
+
+    ast::RelPtr AstBuilder::build_rel(const sc::Relation &rel) {
         switch (rel.rel_type_case()) {
             case sc::Relation::kRead: {
                 auto &rd = rel.read();
@@ -214,7 +221,7 @@ namespace plume_spark {
                     spdlog::debug("{} [{}]", name, type->ToString());
                 }
 
-                auto src = add_datasource_("t", "parquet", *schema);
+                auto src = add_datasource_("t", "parquet", res_parq->source, *schema);
                 if (!src.ok()) {
                     spdlog::error("adding datasource failed: {}", src.status().message());
                 }
@@ -224,16 +231,16 @@ namespace plume_spark {
                 return std::make_unique<ast::Rel>(ast::Read{format, paths, src->columns});
             }
             case sc::Relation::kProject: {
-                auto input = build_rel_(rel.project().input());
+                auto input = build_rel(rel.project().input());
                 std::vector<ast::ExprPtr> exprs{};
                 for (auto &e: rel.project().expressions()) {
-                    exprs.push_back(build_expr_(e));
+                    exprs.push_back(build_expr(e));
                 }
                 return std::make_unique<ast::Rel>(ast::UnresolvedProject{(std::move(input)), std::move(exprs)});
             }
             case sc::Relation::kFilter: {
-                auto input = build_rel_(rel.filter().input());
-                auto cond = build_expr_(rel.filter().condition());
+                auto input = build_rel(rel.filter().input());
+                auto cond = build_expr(rel.filter().condition());
                 return std::make_unique<ast::Rel>(ast::Filter{std::move(input), (std::move(cond))});
             }
             case sc::Relation::kJoin:
@@ -267,7 +274,7 @@ namespace plume_spark {
             case sc::Relation::kWithColumnsRenamed:
                 break;
             case sc::Relation::kShowString: {
-                auto tree = build_rel_(rel.show_string().input());
+                auto tree = build_rel(rel.show_string().input());
                 return tree;
             }
             case sc::Relation::kDrop:

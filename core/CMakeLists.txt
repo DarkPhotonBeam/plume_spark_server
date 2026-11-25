@@ -7,6 +7,7 @@ add_library(plume_spark_core
         src/session_manager.cpp
         src/config_defaults.cpp
         src/ast_builder.cpp
+        src/plume_builder.cpp
         src/util/uuid.cpp
         src/ast/format.cpp
         src/catalog/parquet.cpp
@@ -18,4 +19,4 @@ target_include_directories(plume_spark_core
         PRIVATE src
 )
 
-target_link_libraries(plume_spark_core PUBLIC plume_spark::proto absl::status absl::statusor PRIVATE Arrow::arrow_static spdlog::spdlog Parquet::parquet_static plume)
+target_link_libraries(plume_spark_core PUBLIC plume_spark::proto absl::status absl::statusor PRIVATE Arrow::arrow_static spdlog::spdlog Parquet::parquet_static plume cpr::cpr)

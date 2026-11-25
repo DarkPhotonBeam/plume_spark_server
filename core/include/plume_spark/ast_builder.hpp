@@ -3,23 +3,30 @@
 
 #include "spark/connect/relations.pb.h"
 
+namespace plume::catalog {
+    struct RemoteParquetDataSource;
+}
+
 namespace plume_spark {
     struct ResolvedDataSource {
         std::string name;
         std::string format;
         std::vector<ast::Attribute> columns;
+        std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src;
+        std::shared_ptr<arrow::Schema> arrow_schema;
     };
 
     class AstBuilder {
     public:
-        ast::RelPtr build(const ::spark::connect::Relation &root);
+        [[nodiscard]] ast::RelPtr build(const ::spark::connect::Relation &root);
+        const std::vector<ResolvedDataSource> &get_resolved_data_sources();
 
     private:
-        ast::RelPtr build_rel_(const ::spark::connect::Relation &rel);
-        ast::ExprPtr build_expr_(const ::spark::connect::Expression &exp);
-        ast::Literal build_lit_(const ::spark::connect::Expression_Literal &lit);
+        ast::RelPtr build_rel(const ::spark::connect::Relation &rel);
+        ast::ExprPtr build_expr(const ::spark::connect::Expression &exp);
+        ast::Literal build_lit(const ::spark::connect::Expression_Literal &lit);
 
-        absl::StatusOr<const ResolvedDataSource&> add_datasource_(const std::string &name, const std::string &format, const arrow::Schema& schema);
+        absl::StatusOr<const ResolvedDataSource&> add_datasource_(const std::string &name, const std::string &format, std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src, const arrow::Schema& schema);
         std::optional<ast::Attribute> find_attribute(const std::string &name);
 
         std::vector<ResolvedDataSource> resolved_data_sources_;

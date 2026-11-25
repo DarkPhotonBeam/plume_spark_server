@@ -2,6 +2,8 @@
 #include <google/protobuf/text_format.h>
 #include <spdlog/spdlog.h>
 #include <grpcpp/grpcpp.h>
+#include <arrow/c/bridge.h>
+#include <arrow/record_batch.h>
 
 #include "plume_spark/config_defaults.hpp"
 #include "../include/plume_spark/util/uuid.hpp"
@@ -9,10 +11,82 @@
 #include "plume_spark/util/casts.hpp"
 #include <plume_spark/ast/format.hpp>
 
+#include "duckdb/main/connection.hpp"
+#include "duckdb/main/database.hpp"
+#include "plume/parser/compile.hpp"
+#include "plume/parser/converter.hpp"
+#include "plume_spark/plume_builder.hpp"
+#include <cpr/cpr.h>
+
+#include "duckdb/common/arrow/arrow_converter.hpp"
+#include "plume/dandelion/api.hpp"
+#include "plume/memory/adapter.hpp"
+
 namespace plume_spark {
     namespace sc = ::spark::connect;
 
+    absl::StatusOr<plume::dandelion::BinaryData> run_on_dandelion(const plume::dandelion::BinaryData &body,
+                                                              const std::string &url,       // e.g. "http://localhost:8080/hot/matmul"
+                                                              std::chrono::milliseconds timeout) {
+        cpr::Response resp = cpr::Post(
+            cpr::Url{url},
+            cpr::Body{reinterpret_cast<const char *>(body.data()), body.size()},   // binary body, no copy into a std::string first
+            cpr::Header{{"Content-Type", "application/octet-stream"}},
+            cpr::Timeout{timeout});
+
+        if (resp.error)                                   // transport error: connection refused, timeout, ...
+            return absl::UnavailableError("dandelion request failed: " + resp.error.message);
+        if (resp.status_code < 200 || resp.status_code >= 300)
+            return absl::InternalError("dandelion returned HTTP " + std::to_string(resp.status_code) + ": " + resp.text);
+
+        return plume::dandelion::BinaryData(resp.text.begin(), resp.text.end());   // resp.text holds raw bytes
+    }
+
+    arrow::Result<std::vector<std::shared_ptr<arrow::RecordBatch>>>
+to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, const plume::Schema &out_schema) {
+        // Arrow schema from the plan, so an empty result still has one.
+        duckdb::vector<duckdb::LogicalType> types;
+        duckdb::vector<std::string> names;
+        for (const auto &c : out_schema.columns) {
+            types.push_back(plume::ToLogicalType(c.type));
+            names.push_back(c.name);
+        }
+        duckdb::ClientProperties props = con.context->GetClientProperties();   // defaults: UTC, 32-bit offsets (utf8, not large_utf8), no string views
+        ArrowSchema c_schema;
+        duckdb::ArrowConverter::ToArrowSchema(&c_schema, types, names, props);
+        ARROW_ASSIGN_OR_RAISE(auto schema, arrow::ImportSchema(&c_schema));
+
+        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+        if (sets.empty()) return batches;
+        for (auto &item : sets[0]) {
+            plume::Schema block_schema;
+            // Chunks borrow item.data; VARCHAR offsets are swizzled into pointers in place.
+            auto chunks = plume::memory::ImportBlockChunks(item.data.data(), item.data.size(), block_schema);
+            if (chunks.is_error()) return arrow::Status::Invalid(chunks.error_msg());
+            for (auto &chunk : std::move(chunks).unwrap()) {
+                if (chunk->GetTypes() != types)
+                    return arrow::Status::Invalid("result block types differ from the plan's output schema");
+                ArrowArray c_array;
+                duckdb::ArrowConverter::ToArrowArray(*chunk, &c_array, props, {});   // copies into Arrow-owned buffers
+                ARROW_ASSIGN_OR_RAISE(auto rb, arrow::ImportRecordBatch(&c_array, schema));
+                batches.push_back(std::move(rb));
+            }
+        }
+        return batches;
+    }
+
     grpc::Status SparkConnectServiceImpl::ExecutePlan(grpc::ServerContext *ctx,
+                                                      const sc::ExecutePlanRequest *req,
+                                                      grpc::ServerWriter<sc::ExecutePlanResponse> *writer) {
+        try {
+            return execute_plan_impl(ctx, req, writer);
+        } catch (const std::exception &e) {
+            spdlog::error("ExecutePlan threw: {}", e.what());
+            return {grpc::StatusCode::INTERNAL, e.what()};
+        }
+    }
+
+    grpc::Status SparkConnectServiceImpl::execute_plan_impl(grpc::ServerContext *ctx,
                                                       const sc::ExecutePlanRequest *req,
                                                       grpc::ServerWriter<sc::ExecutePlanResponse> *writer) {
         auto s = session_manager_.resolve(*req);
@@ -37,6 +111,57 @@ namespace plume_spark {
         spdlog::debug("built ast");
         spdlog::debug("tree:\n{}", *ast);
 
+        plume::parser::ConverterConfig converter_config{};
+
+        PlumeBuilder builder(std::move(ast), ast_builder.get_resolved_data_sources(), converter_config);
+        auto plan_res = builder.build();
+        if (!plan_res.ok()) {
+            spdlog::error("Building plume physical plan failed: {}", plan_res.status().ToString());
+            return util::to_grpc(plan_res.status());
+        }
+
+
+        plume::parser::CompiledComposition cc;
+        cc.plan = *std::move(plan_res);
+
+        spdlog::debug("Plume Physical Plan:\n{}", cc.plan->ToString());
+
+        // ?
+
+        duckdb::DuckDB db(nullptr);
+        duckdb::Connection con(db);
+
+
+        auto comp_res = plume::dandelion::BuildDandelionComposition(con, *cc.plan, "my_comp", converter_config);
+        if (comp_res.is_error()) {
+            spdlog::error("Building Dandelion Composition failed: {}", comp_res.error_msg());
+            return {grpc::StatusCode::INTERNAL, comp_res.error_msg()};
+        }
+
+        spdlog::debug("Composition:\n{}", comp_res.unwrap().dsl);
+
+        auto body = plume::dandelion::InvocationBody(comp_res.unwrap(), false);
+
+        if (body.is_error()) {
+            spdlog::error("Building Body failed: {}", body.error_msg());
+            return {grpc::StatusCode::INTERNAL, body.error_msg()};
+        }
+
+        auto resp = run_on_dandelion(body.unwrap(), "http://localhost:9090/hot/matmul", std::chrono::seconds(60));
+        if (!resp.ok()) {
+            spdlog::error("run on dandelion failed: {}", resp.status().ToString());
+            return util::to_grpc(resp.status());
+        }
+
+        auto text = plume::dandelion::ParseAndRenderResponseBody(*resp, cc.plan->output_schema);
+        //spdlog::info("result:\n{}", text.is_ok() ? text.unwrap() : text.error_msg());
+
+        auto sets = plume::dandelion::ParseResponseBody(*resp);
+        if (sets.is_error()) return {grpc::StatusCode::INTERNAL, sets.error_msg()};
+        auto owned_sets = std::move(sets).unwrap();                      // must be mutable: ImportBlockChunks swizzles
+        auto batches = to_record_batches(con, owned_sets, cc.plan->output_schema);
+        if (!batches.ok()) return {grpc::StatusCode::INTERNAL, batches.status().ToString()};
+
         auto make_response = [&] {
             sc::ExecutePlanResponse r;
             r.set_session_id(sess.session_id);
@@ -46,12 +171,7 @@ namespace plume_spark {
             return r;
         };
 
-        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-        auto dummy_batch = util::make_range_batch(10);
-        if (!dummy_batch.ok()) return {grpc::StatusCode::INTERNAL, dummy_batch.status().ToString()};
-        batches.push_back(*dummy_batch);
-
-        for (const auto &b : batches) {
+        for (const auto &b : *batches) {
             auto ipc = util::to_ipc_stream(*b);
             if (!ipc.ok()) return {grpc::StatusCode::INTERNAL, ipc.status().ToString()};
 
