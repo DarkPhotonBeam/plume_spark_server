@@ -9,7 +9,8 @@ add_library(plume_spark_core
         src/ast_builder.cpp
         src/plume_builder.cpp
         src/util/uuid.cpp
-        src/ast/format.cpp
+        src/util/plan_format.cpp
+        src/ast/relation.cpp
         src/catalog/parquet.cpp
 )
 add_library(plume_spark::core ALIAS plume_spark_core)

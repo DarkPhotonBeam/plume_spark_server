@@ -1,37 +1,36 @@
 #pragma once
-#include <plume_spark/ast/base.hpp>
+#include <absl/status/statusor.h>
+#include <plume_spark/ast/expression.hpp>
+#include <plume_spark/ast/relation.hpp>
 
 #include "spark/connect/relations.pb.h"
 
-namespace plume::catalog {
-    struct RemoteParquetDataSource;
-}
 
 namespace plume_spark {
-    struct ResolvedDataSource {
-        std::string name;
-        std::string format;
-        std::vector<ast::Attribute> columns;
-        std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src;
-        std::shared_ptr<arrow::Schema> arrow_schema;
+    struct Scope {
+        std::span<const ast::OutputColumn> cols;
+
+        absl::StatusOr<const ast::OutputColumn *> lookup(std::string_view name) const {
+            const ast::OutputColumn *found = nullptr;
+            for (const auto &c : cols) {
+                if (!absl::EqualsIgnoreCase(c.name, name)) continue;
+                if (found) return absl::InvalidArgumentError(absl::StrCat("ambiguous column '", name, "'"));
+                found = &c;
+            }
+            if (!found) return absl::InvalidArgumentError(absl::StrCat("column '", name, "' not found"));
+            return found;
+        }
     };
 
     class AstBuilder {
     public:
-        [[nodiscard]] ast::RelPtr build(const ::spark::connect::Relation &root);
-        const std::vector<ResolvedDataSource> &get_resolved_data_sources();
+        [[nodiscard]] absl::StatusOr<ast::RelPtr> build(const ::spark::connect::Relation &root);
 
     private:
-        ast::RelPtr build_rel(const ::spark::connect::Relation &rel);
-        ast::ExprPtr build_expr(const ::spark::connect::Expression &exp);
-        ast::Literal build_lit(const ::spark::connect::Expression_Literal &lit);
+        absl::StatusOr<ast::RelPtr> build_rel(const ::spark::connect::Relation &rel);
 
-        absl::StatusOr<const ResolvedDataSource&> add_datasource_(const std::string &name, const std::string &format, std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src, const arrow::Schema& schema);
-        std::optional<ast::Attribute> find_attribute(const std::string &name);
-
-        std::vector<ResolvedDataSource> resolved_data_sources_;
-        std::unordered_map<std::string, std::pair<size_t, size_t>> name_map_;
-        ast::ColumnIdGenerator id_generator_;
+        absl::StatusOr<ast::ExprPtr> build_expr(const ::spark::connect::Expression &exp, const Scope &scope);
+        static absl::StatusOr<ast::ExprPtr> build_lit(const ::spark::connect::Expression_Literal &lit);
 
     };
 }

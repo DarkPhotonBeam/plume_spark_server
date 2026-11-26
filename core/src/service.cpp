@@ -21,6 +21,7 @@
 #include "duckdb/common/arrow/arrow_converter.hpp"
 #include "plume/dandelion/api.hpp"
 #include "plume/memory/adapter.hpp"
+#include "plume_spark/util/plan_format.hpp"
 
 namespace plume_spark {
     namespace sc = ::spark::connect;
@@ -97,7 +98,7 @@ to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, c
 
         const std::string op_id = req->has_operation_id() ? req->operation_id() : util::generate_uuid_v4();
 
-        spdlog::debug("ExecutePlanRequest:\n{}", util::msg_to_text(*req));
+        spdlog::debug("ExecutePlanRequest:\n{}", util::format_plan(req->plan()));
 
         if (!req->has_plan() || !req->plan().has_root()) {
             return grpc::Status::OK;
@@ -111,56 +112,67 @@ to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, c
         spdlog::debug("built ast");
         spdlog::debug("tree:\n{}", *ast);
 
-        plume::parser::ConverterConfig converter_config{};
 
-        PlumeBuilder builder(std::move(ast), ast_builder.get_resolved_data_sources(), converter_config);
-        auto plan_res = builder.build();
-        if (!plan_res.ok()) {
-            spdlog::error("Building plume physical plan failed: {}", plan_res.status().ToString());
-            return util::to_grpc(plan_res.status());
-        }
+        /// CONVERSION STEP BEGIN
+
+        //
+        // plume::parser::ConverterConfig converter_config{};
+        //
+        // PlumeBuilder builder(std::move(ast), ast_builder.get_resolved_data_sources(), converter_config);
+        // auto plan_res = builder.build();
+        // if (!plan_res.ok()) {
+        //     spdlog::error("Building plume physical plan failed: {}", plan_res.status().ToString());
+        //     return util::to_grpc(plan_res.status());
+        // }
+        //
+        //
+        // plume::parser::CompiledComposition cc;
+        // cc.plan = *std::move(plan_res);
+        //
+        // spdlog::debug("Plume Physical Plan:\n{}", cc.plan->ToString());
+        //
+        // // ?
+        //
+        // duckdb::DuckDB db(nullptr);
+        // duckdb::Connection con(db);
+        //
+        //
+        // auto comp_res = plume::dandelion::BuildDandelionComposition(con, *cc.plan, "my_comp", converter_config);
+        // if (comp_res.is_error()) {
+        //     spdlog::error("Building Dandelion Composition failed: {}", comp_res.error_msg());
+        //     return {grpc::StatusCode::INTERNAL, comp_res.error_msg()};
+        // }
+        //
+        // spdlog::debug("Composition:\n{}", comp_res.unwrap().dsl);
+        //
+        // auto body = plume::dandelion::InvocationBody(comp_res.unwrap(), false);
+        //
+        // if (body.is_error()) {
+        //     spdlog::error("Building Body failed: {}", body.error_msg());
+        //     return {grpc::StatusCode::INTERNAL, body.error_msg()};
+        // }
+        //
+        // auto resp = run_on_dandelion(body.unwrap(), "http://localhost:9090/hot/matmul", std::chrono::seconds(60));
+        // if (!resp.ok()) {
+        //     spdlog::error("run on dandelion failed: {}", resp.status().ToString());
+        //     return util::to_grpc(resp.status());
+        // }
+        //
+        // auto text = plume::dandelion::ParseAndRenderResponseBody(*resp, cc.plan->output_schema);
+        // //spdlog::info("result:\n{}", text.is_ok() ? text.unwrap() : text.error_msg());
 
 
-        plume::parser::CompiledComposition cc;
-        cc.plan = *std::move(plan_res);
-
-        spdlog::debug("Plume Physical Plan:\n{}", cc.plan->ToString());
-
-        // ?
-
-        duckdb::DuckDB db(nullptr);
-        duckdb::Connection con(db);
+        /// CONVERSION STEP END
 
 
-        auto comp_res = plume::dandelion::BuildDandelionComposition(con, *cc.plan, "my_comp", converter_config);
-        if (comp_res.is_error()) {
-            spdlog::error("Building Dandelion Composition failed: {}", comp_res.error_msg());
-            return {grpc::StatusCode::INTERNAL, comp_res.error_msg()};
-        }
+        // auto sets = plume::dandelion::ParseResponseBody(*resp);
+        // if (sets.is_error()) return {grpc::StatusCode::INTERNAL, sets.error_msg()};
+        // auto owned_sets = std::move(sets).unwrap();                      // must be mutable: ImportBlockChunks swizzles
+        // auto batches_res = to_record_batches(con, owned_sets, cc.plan->output_schema);
+        // if (!batches_res.ok()) return {grpc::StatusCode::INTERNAL, batches_res.status().ToString()};
+        // auto batches = *batches_res;
 
-        spdlog::debug("Composition:\n{}", comp_res.unwrap().dsl);
 
-        auto body = plume::dandelion::InvocationBody(comp_res.unwrap(), false);
-
-        if (body.is_error()) {
-            spdlog::error("Building Body failed: {}", body.error_msg());
-            return {grpc::StatusCode::INTERNAL, body.error_msg()};
-        }
-
-        auto resp = run_on_dandelion(body.unwrap(), "http://localhost:9090/hot/matmul", std::chrono::seconds(60));
-        if (!resp.ok()) {
-            spdlog::error("run on dandelion failed: {}", resp.status().ToString());
-            return util::to_grpc(resp.status());
-        }
-
-        auto text = plume::dandelion::ParseAndRenderResponseBody(*resp, cc.plan->output_schema);
-        //spdlog::info("result:\n{}", text.is_ok() ? text.unwrap() : text.error_msg());
-
-        auto sets = plume::dandelion::ParseResponseBody(*resp);
-        if (sets.is_error()) return {grpc::StatusCode::INTERNAL, sets.error_msg()};
-        auto owned_sets = std::move(sets).unwrap();                      // must be mutable: ImportBlockChunks swizzles
-        auto batches = to_record_batches(con, owned_sets, cc.plan->output_schema);
-        if (!batches.ok()) return {grpc::StatusCode::INTERNAL, batches.status().ToString()};
 
         auto make_response = [&] {
             sc::ExecutePlanResponse r;
@@ -171,7 +183,17 @@ to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, c
             return r;
         };
 
-        for (const auto &b : *batches) {
+
+        std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
+        auto dummy_batch = util::make_range_batch(20);
+        if (!dummy_batch.ok()) {
+            spdlog::error("make_range_batch failed");
+            return {grpc::StatusCode::INTERNAL, dummy_batch.status().ToString()};
+        }
+        batches.push_back(*dummy_batch);
+
+
+        for (const auto &b : batches) {
             auto ipc = util::to_ipc_stream(*b);
             if (!ipc.ok()) return {grpc::StatusCode::INTERNAL, ipc.status().ToString()};
 
