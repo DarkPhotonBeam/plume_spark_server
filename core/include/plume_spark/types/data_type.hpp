@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <arrow/type.h>
 #include <absl/status/statusor.h>
+#include <absl/strings/str_cat.h>
 
 namespace plume_spark::types {
 
@@ -37,6 +38,32 @@ namespace plume_spark::types {
         static DataType timestamp() { return DataType(TypeId::Timestamp); }
         static DataType timestamp_ntz() { return DataType(TypeId::TimestampNtz); }
 
+        [[nodiscard]] bool is_numeric() const {
+            switch (id()) {
+                case TypeId::String:
+                case TypeId::Binary:
+                case TypeId::Date:
+                case TypeId::Timestamp:
+                case TypeId::TimestampNtz:
+                case TypeId::List:
+                case TypeId::Struct:
+                case TypeId::Map:
+                case TypeId::Null:
+                case TypeId::Boolean:
+                    return false;
+                case TypeId::Int8:
+                case TypeId::Int16:
+                case TypeId::Int32:
+                case TypeId::Int64:
+                case TypeId::Float32:
+                case TypeId::Float64:
+                case TypeId::Decimal:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         static absl::StatusOr<DataType> from_arrow(const arrow::DataType &t) {
             switch (t.id()) {
                 case arrow::Type::BOOL:
@@ -62,10 +89,12 @@ namespace plume_spark::types {
                     return date();
                 case arrow::Type::TIMESTAMP:
                     return timestamp();
+                case arrow::Type::DICTIONARY:
+                    return from_arrow(*dynamic_cast<const arrow::DictionaryType &>(t).value_type());
                 default:
-                    return absl::UnimplementedError("type not implemented");
+                    return absl::UnimplementedError(absl::StrCat("type '", t.ToString(), "' not implemented"));
             }
-            return absl::UnimplementedError("type not implemented");
+            return absl::UnimplementedError(absl::StrCat("type '", t.ToString(), "' not implemented"));
         }
 
         [[nodiscard]] TypeId id() const { return id_; }
