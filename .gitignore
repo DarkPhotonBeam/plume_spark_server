@@ -10,6 +10,7 @@ CMakeUserPresets.json
 
 /.idea/
 /.vscode/
+.mcp.json
 
 .DS_Store
 *~
