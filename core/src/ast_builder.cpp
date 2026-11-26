@@ -10,6 +10,24 @@ namespace plume_spark {
     namespace sc = ::spark::connect;
     using namespace ast;
 
+    static std::string expr_case_name(const sc::Expression &e) {
+        const auto *field = sc::Expression::descriptor()->FindFieldByNumber(e.expr_type_case());
+        if (!field) return "EXPR_TYPE_NOT_SET";
+        return std::string(field->name());
+    }
+
+    static std::string rel_case_name(const sc::Relation &r) {
+        const auto *field = sc::Relation::descriptor()->FindFieldByNumber(r.rel_type_case());
+        if (!field) return "REL_TYPE_NOT_SET";
+        return std::string(field->name());
+    }
+
+    static std::string lit_case_name(const sc::Expression_Literal &l) {
+        const auto *field = sc::Expression_Literal::descriptor()->FindFieldByNumber(l.literal_type_case());
+        if (!field) return "LITERAL_TYPE_NOT_SET";
+        return std::string(field->name());
+    }
+
     absl::StatusOr<ExprPtr> AstBuilder::build_lit(const sc::Expression_Literal &lit) {
         switch (lit.literal_type_case()) {
             case spark::connect::Expression_Literal::kNull:
@@ -63,13 +81,16 @@ namespace plume_spark {
             case spark::connect::Expression_Literal::LITERAL_TYPE_NOT_SET:
                 break;
         }
-        return absl::InternalError("unexpected literal case");
+        return absl::InternalError(absl::StrCat("literal '", lit_case_name(lit), "' not implemented"));
     }
 
     absl::StatusOr<ExprPtr> AstBuilder::build_expr(const sc::Expression &exp, const Scope &scope) {
         switch (exp.expr_type_case()) {
-            case spark::connect::Expression::kLiteral:
-                break;
+            case spark::connect::Expression::kLiteral: {
+                auto lit = build_lit(exp.literal());
+                if (!lit.ok()) return lit.status();
+                return *std::move(lit);
+            }
             case spark::connect::Expression::kUnresolvedAttribute:
             {
                 auto c = scope.lookup(exp.unresolved_attribute().unparsed_identifier());
@@ -78,6 +99,7 @@ namespace plume_spark {
             }
             case spark::connect::Expression::kUnresolvedFunction:
             {
+                using dt = types::DataType;
                 auto &uf = exp.unresolved_function();
                 auto &name = uf.function_name();
                 auto n_args = uf.arguments_size();
@@ -87,26 +109,49 @@ namespace plume_spark {
                     if (!expr.ok()) return expr.status();
                 }  else if (n_args == 2) {
                     // binary
+                    auto lhs_res = build_expr(uf.arguments(0), scope);
+                    if (!lhs_res.ok()) return lhs_res.status();
+                    auto lhs = *std::move(lhs_res);
+                    auto rhs_res = build_expr(uf.arguments(1), scope);
+                    if (!rhs_res.ok()) return rhs_res.status();
+                    auto rhs = *std::move(rhs_res);
                     auto op = BinOp::And;
-                    if (name == "AND") {
+                    auto rt = types::DataType::null();
+                    if (name == "and") {
                         op = BinOp::And;
+                        rt = dt::boolean();
+                        if (lhs->type != dt::boolean() || rhs->type != dt::boolean()) {
+                            return absl::InvalidArgumentError("type error: lhs or rhs of AND not of boolean type");
+                        }
                     } else if (name == "<=") {
                         op = BinOp::Lte;
+                        rt = dt::boolean();
+                        if (!lhs->type.is_numeric() || !rhs->type.is_numeric()) {
+                            return absl::InvalidArgumentError("type error: comparison on non-numeric types");
+                        }
                     } else if (name == "<") {
                         op = BinOp::Lt;
+                        rt = dt::boolean();
+                        if (!lhs->type.is_numeric() || !rhs->type.is_numeric()) {
+                            return absl::InvalidArgumentError("type error: comparison on non-numeric types");
+                        }
                     } else if (name == ">=") {
                         op = BinOp::Gte;
+                        rt = dt::boolean();
+                        if (!lhs->type.is_numeric() || !rhs->type.is_numeric()) {
+                            return absl::InvalidArgumentError("type error: comparison on non-numeric types");
+                        }
                     }  else if (name == ">") {
                         op = BinOp::Gt;
+                        rt = dt::boolean();
+                        if (!lhs->type.is_numeric() || !rhs->type.is_numeric()) {
+                            return absl::InvalidArgumentError("type error: comparison on non-numeric types");
+                        }
                     } else {
-                        return absl::UnimplementedError(absl::StrCat("binop ", name, " not implemented"));
+                        return absl::UnimplementedError(absl::StrCat("binop '", name, "' not implemented"));
                     }
-                    auto lhs = build_expr(uf.arguments(0), scope);
-                    if (!lhs.ok()) return lhs.status();
-                    auto rhs = build_expr(uf.arguments(1), scope);
-                    if (!rhs.ok()) return rhs.status();
                     // todo: typecheck
-                    return expr(Binary{op, *std::move(lhs), *std::move(rhs)}, (*lhs)->type, (*lhs)->nullable);
+                    return expr(Binary{op, std::move(lhs), std::move(rhs)}, rt, lhs->nullable);
                 } else {
                     return absl::UnimplementedError("functions of this arity not implemented");
                 }
@@ -153,7 +198,7 @@ namespace plume_spark {
             case spark::connect::Expression::EXPR_TYPE_NOT_SET:
                 break;
         }
-        return absl::UnimplementedError("build_expr not implemented");
+        return absl::UnimplementedError(absl::StrCat("expression '", expr_case_name(exp), "' not implemented"));
     }
 
     absl::StatusOr<RelPtr> AstBuilder::build(const spark::connect::Relation &root) {
@@ -287,6 +332,6 @@ namespace plume_spark {
             default:
                 break;
         }
-        return absl::UnimplementedError("this spark relation is not implemented");
+        return absl::UnimplementedError(absl::StrCat("relation '", rel_case_name(rel), "' not implemented"));
     }
 }

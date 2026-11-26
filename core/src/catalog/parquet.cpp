@@ -52,7 +52,7 @@ namespace plume_spark::catalog {
     absl::StatusOr<types::DataType> to_ast_type(const arrow::DataType &t) {
         switch (t.id()) {
             case arrow::Type::DICTIONARY: // pyarrow-written strings: use the value type
-                return to_ast_type(*static_cast<const arrow::DictionaryType &>(t).value_type());
+                return to_ast_type(*dynamic_cast<const arrow::DictionaryType &>(t).value_type());
             case arrow::Type::NA: return types::DataType::null();
             case arrow::Type::BOOL: return types::DataType::boolean();
             case arrow::Type::INT8: return types::DataType::int8();
@@ -87,11 +87,14 @@ namespace plume_spark::catalog {
         auto src = resolve_with_plume(std::move(name), std::move(urls));
         if (!src.ok()) return src.status();
 
-        auto schema = arrow_schema_from_footer((*src)->footer_bytes.at(0));
+        auto arr_schema = arrow_schema_from_footer((*src)->footer_bytes.at(0));
+        if (!arr_schema.ok()) return arr_schema.status();
+
+        auto schema = schema_from_arrow(**arr_schema);
         if (!schema.ok()) return schema.status();
 
+        auto data_source = std::make_shared<const DataSource>(Key{}, Format::Parquet, *std::move(schema), *std::move(src));
 
-
-        return absl::UnimplementedError("parquet datasource not implemented");
+        return data_source;
     }
 }
