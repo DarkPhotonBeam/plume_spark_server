@@ -1,4 +1,4 @@
-#include <plume_spark/config_defaults.hpp>
+#include "plume_spark/config_defaults.hpp"
 
 #include <map>
 

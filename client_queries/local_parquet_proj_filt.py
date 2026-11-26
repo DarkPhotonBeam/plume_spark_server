@@ -11,4 +11,4 @@ src = sys.argv[1] if len(
 spark = session()
 df = spark.read.parquet(src)
 print(df.filter(F.col("is_priority") & (F.col("amount") >= 50.0)).select(
-    "order_id", "amount", "status").show())
+    "order_id", "amount", "status").toPandas())

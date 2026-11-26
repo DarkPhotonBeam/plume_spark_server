@@ -1,8 +1,8 @@
 #pragma once
 #include <absl/status/statusor.h>
 #include <parquet/arrow/schema.h>
-#include "plume/catalog/parquet.hpp"
-#include "plume_spark/ast_builder.hpp"
+#include <plume/catalog/parquet.hpp>
+#include "plume_spark/types/data_type.hpp"
 
 namespace plume_spark::catalog {
 
@@ -13,7 +13,7 @@ namespace plume_spark::catalog {
         std::shared_ptr<arrow::Schema> schema; // logical schema (from the first file)
     };
 
-    absl::StatusOr<ast::DataType> to_ast_type(const arrow::DataType &t);
+    absl::StatusOr<types::DataType> to_ast_type(const arrow::DataType &t);
 
     absl::StatusOr<ResolvedParquet> resolve_parquet(std::string name, std::vector<std::string> urls);
 }

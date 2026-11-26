@@ -1,7 +1,7 @@
 #pragma once
 #include <absl/status/statusor.h>
-#include <plume_spark/ast/expression.hpp>
-#include <plume_spark/ast/relation.hpp>
+#include "plume_spark/ast/expression.hpp"
+#include "plume_spark/ast/relation.hpp"
 
 #include "spark/connect/relations.pb.h"
 

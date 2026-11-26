@@ -2,7 +2,7 @@
 #include <grpcpp/server_builder.h>
 #include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
-#include <plume_spark/service.hpp>
+#include "plume_spark/service.hpp"
 
 
 int main(int argc, char *argv[]) {

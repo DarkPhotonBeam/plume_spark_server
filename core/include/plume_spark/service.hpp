@@ -1,7 +1,7 @@
 #pragma once
 #include <spark/connect/base.grpc.pb.h>
 
-#include <plume_spark/session_manager.hpp>
+#include "plume_spark/session_manager.hpp"
 
 namespace plume_spark {
     class SparkConnectServiceImpl final : public ::spark::connect::SparkConnectService::Service {

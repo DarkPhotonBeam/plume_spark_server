@@ -1,4 +1,4 @@
-#include <plume_spark/session_manager.hpp>
+#include "plume_spark/session_manager.hpp"
 #include <../include/plume_spark/util/uuid.hpp>
 
 namespace {

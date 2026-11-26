@@ -1,11 +1,10 @@
-#include <plume_spark/ast_builder.hpp>
+#include "plume_spark/ast_builder.hpp"
 #include <spdlog/spdlog.h>
-#include <plume/catalog/remote_resolver.hpp>
 #include <plume/catalog/parquet.hpp>
 
 #include "plume_spark/catalog/parquet.hpp"
-#include <plume_spark/ast/expression.hpp>
-#include <plume_spark/ast/relation.hpp>
+#include "plume_spark/ast/expression.hpp"
+#include "plume_spark/ast/relation.hpp"
 
 namespace plume_spark {
     namespace sc = ::spark::connect;
@@ -168,7 +167,7 @@ namespace plume_spark {
             paths.push_back(p);
         }
         if (format == "parquet") {
-            return catalog::DataSource::parquet(std::move(paths));
+            return catalog::DataSource::parquet("pq", std::move(paths));
         }
         return absl::UnimplementedError("the data source format " + format + " is not supported");
     }
@@ -263,7 +262,7 @@ namespace plume_spark {
 
                 auto built_cond = build_expr(rel.filter().condition(), Scope{input_cols});
                 if (!built_cond.ok()) return built_cond.status();
-                if ((*built_cond)->type != DataType::boolean()) {
+                if ((*built_cond)->type != types::DataType::boolean()) {
                     return absl::InvalidArgumentError("type error: filter condition is not a boolean");
                 }
 

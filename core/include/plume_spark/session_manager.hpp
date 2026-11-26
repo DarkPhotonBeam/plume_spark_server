@@ -2,8 +2,8 @@
 #include <memory>
 #include <unordered_map>
 #include <absl/status/statusor.h>
-#include <plume_spark/session.hpp>
-#include <plume_spark/util/uuid.hpp>
+#include "plume_spark/session.hpp"
+#include "plume_spark/util/uuid.hpp"
 
 namespace plume_spark {
     template<typename R>
