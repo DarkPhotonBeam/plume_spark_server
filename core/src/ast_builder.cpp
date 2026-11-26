@@ -4,11 +4,14 @@
 #include <plume/catalog/parquet.hpp>
 
 #include "plume_spark/catalog/parquet.hpp"
+#include <plume_spark/ast/expression.hpp>
+#include <plume_spark/ast/relation.hpp>
 
 namespace plume_spark {
     namespace sc = ::spark::connect;
+    using namespace ast;
 
-    ast::Literal AstBuilder::build_lit(const sc::Expression_Literal &lit) {
+    absl::StatusOr<ExprPtr> AstBuilder::build_lit(const sc::Expression_Literal &lit) {
         switch (lit.literal_type_case()) {
             case spark::connect::Expression_Literal::kNull:
                 break;
@@ -21,17 +24,17 @@ namespace plume_spark {
             case spark::connect::Expression_Literal::kShort:
                 break;
             case spark::connect::Expression_Literal::kInteger:
-                return ast::int32_lit(lit.integer());
+                return lit_i32(lit.integer());
             case spark::connect::Expression_Literal::kLong:
-                return ast::int64_lit(lit.long_());
+                return lit_i64(lit.long_());
             case spark::connect::Expression_Literal::kFloat:
                 break;
             case spark::connect::Expression_Literal::kDouble:
-                return ast::float64_lit(lit.double_());
+                return lit_f64(lit.double_());
             case spark::connect::Expression_Literal::kDecimal:
                 break;
             case spark::connect::Expression_Literal::kString:
-                return ast::string_lit(lit.string());
+                return lit_string(lit.string());
             case spark::connect::Expression_Literal::kDate:
                 break;
             case spark::connect::Expression_Literal::kTimestamp:
@@ -61,86 +64,21 @@ namespace plume_spark {
             case spark::connect::Expression_Literal::LITERAL_TYPE_NOT_SET:
                 break;
         }
-        return ast::int32_lit(0); // todo: error handling instead of default return
+        return absl::InternalError("unexpected literal case");
     }
 
-    absl::StatusOr<const ResolvedDataSource&> AstBuilder::add_datasource_(const std::string &name, const std::string &format, std::shared_ptr<plume::catalog::RemoteParquetDataSource> plume_src, const arrow::Schema &schema) {
-        ResolvedDataSource src;
-        spdlog::debug("add {} datasource {}", format, name);
-        for (auto &field : schema.fields()) {
-            absl::StatusOr<ast::DataType> type = catalog::to_ast_type(*field->type());
-            if (!type.ok()) {
-                return absl::InvalidArgumentError(
-                absl::StrCat("column '", field->name(), "': ", type.status().message()));
-            }
-            ast::Attribute attr{
-                .id = id_generator_.fresh(),
-                .name = field->name(),
-                .type = *std::move(type),
-                .nullable = field->nullable(),
-            };
-            name_map_.emplace(attr.name, std::make_pair<size_t, size_t>(resolved_data_sources_.size(), src.columns.size()));
-            src.columns.push_back(attr);
-        }
-        src.name = name;
-        src.format = format;
-        src.plume_src = std::move(plume_src);
-        src.arrow_schema = std::make_shared<arrow::Schema>(schema);
-        resolved_data_sources_.push_back(src);
-        return resolved_data_sources_.back();
-    }
-
-    std::optional<ast::Attribute> AstBuilder::find_attribute(const std::string &name) {
-        if (const auto it = name_map_.find(name); it != name_map_.end()) {
-            const auto [fst, snd] = it->second;
-            return resolved_data_sources_[fst].columns[snd];
-        }
-        return std::nullopt;
-    }
-
-    ast::ExprPtr AstBuilder::build_expr(const sc::Expression &exp) {
+    absl::StatusOr<ExprPtr> AstBuilder::build_expr(const sc::Expression &exp, const Scope &scope) {
         switch (exp.expr_type_case()) {
-            case spark::connect::Expression::kLiteral: {
-                auto &lit = exp.literal();
-                return std::make_unique<ast::Expr>(build_lit(lit));
+            case spark::connect::Expression::kLiteral:
+                break;
+            case spark::connect::Expression::kUnresolvedAttribute:
+            {
+                auto c = scope.lookup(exp.unresolved_attribute().unparsed_identifier());
+                if (!c.ok()) return c.status();
+                return expr(Reference{(*c)->id}, (*c)->type, (*c)->nullable);
             }
-            case spark::connect::Expression::kUnresolvedAttribute: {
-                auto &ua = exp.unresolved_attribute();
-
-                if (auto a = find_attribute(ua.unparsed_identifier()); a.has_value()) {
-                    return std::make_unique<ast::Expr>(*a);
-                }
-
-                return std::make_unique<ast::Expr>(ast::UnresolvedAttribute{
-                    .name = ua.unparsed_identifier(),
-                    .is_metadata_col = ua.is_metadata_column()
-                });
-            }
-            case spark::connect::Expression::kUnresolvedFunction: {
-                auto &uf = exp.unresolved_function();
-                auto &name = uf.function_name();
-                auto n_args = uf.arguments_size();
-                if (n_args == 2) {
-                    // binary
-                    auto lhs = build_expr(uf.arguments().Get(0));
-                    auto rhs = build_expr(uf.arguments().Get(1));
-                    ast::BinOp op = ast::BinOp::And;
-                    if (name == "and") {
-                        op = ast::BinOp::And;
-                    } else if (name == "add") {
-                        op = ast::BinOp::Add;
-                    } else if (name == ">=") {
-                        op = ast::BinOp::Gte;
-                    } else {
-                        spdlog::error("UNKNOWN FUNCTION NAME '{}'", name);
-                    }
-                    return std::make_unique<ast::Expr>(ast::Binary{
-                        .op = op,
-                        .lhs = std::move(lhs),
-                        .rhs = std::move(rhs)
-                    });
-                }
-            }
+            case spark::connect::Expression::kUnresolvedFunction:
+                break;
             case spark::connect::Expression::kExpressionString:
                 break;
             case spark::connect::Expression::kUnresolvedStar:
@@ -182,191 +120,68 @@ namespace plume_spark {
             case spark::connect::Expression::EXPR_TYPE_NOT_SET:
                 break;
         }
-        return nullptr;
+        return absl::UnimplementedError("build_expr not implemented");
     }
 
-
-    ast::RelPtr AstBuilder::build(const spark::connect::Relation &root) {
+    absl::StatusOr<RelPtr> AstBuilder::build(const spark::connect::Relation &root) {
         return build_rel(root);
     }
 
-    // todo: returning reference could cause dangling references
-    const std::vector<ResolvedDataSource> &AstBuilder::get_resolved_data_sources() {
-        return resolved_data_sources_;
+    absl::StatusOr<std::shared_ptr<catalog::DataSource>> get_data_source(const sc::Read_DataSource &ds) {
+        auto &format = ds.format();
+        if (format == "parquet") {
+
+        }
+        return absl::UnimplementedError("the data source format " + format + " is not supported");
     }
 
-    ast::RelPtr AstBuilder::build_rel(const sc::Relation &rel) {
+    absl::StatusOr<std::vector<OutputColumn>> output_columns_from_data_source(const catalog::DataSource &src) {
+        return absl::UnimplementedError("output_columns_from_data_source");
+    }
+
+    absl::StatusOr<RelPtr> AstBuilder::build_rel(const sc::Relation &rel) {
         switch (rel.rel_type_case()) {
-            case sc::Relation::kRead: {
-                auto &rd = rel.read();
-                auto &ds = rd.data_source();
-                auto &format = ds.format();
-                auto passed_schema = ds.schema();
-                std::vector<std::string> paths{};
-                for (auto &path: ds.paths()) {
-                    paths.push_back(path);
-                }
-                // todo: resolve schema
+            case spark::connect::Relation::kRead:
+            {
+                auto ds = get_data_source(rel.read().data_source());
+                if (!ds.ok()) return ds.status();
 
-                auto res_parq = catalog::resolve_parquet("t", paths);
-                if (!res_parq.ok()) {
-                    spdlog::error("resolve_parquet failed {}", res_parq.status().ToString());
-                }
+                auto cols = output_columns_from_data_source(**ds);
+                if (!cols.ok()) return cols.status();
 
-                auto schema = res_parq->schema;
-
-                for (auto &field: schema->fields()) {
-                    auto &name = field->name();
-                    auto &type = field->type();
-                    spdlog::debug("{} [{}]", name, type->ToString());
-                }
-
-                auto src = add_datasource_("t", "parquet", res_parq->source, *schema);
-                if (!src.ok()) {
-                    spdlog::error("adding datasource failed: {}", src.status().message());
-                }
-                spdlog::debug("added new datasource");
-
-                // if parquet -> get schema from parquet
-                return std::make_unique<ast::Rel>(ast::Read{format, paths, src->columns});
+                return std::make_unique<Relation>(Read{.data_source = *ds, .output = *cols});
             }
-            case sc::Relation::kProject: {
+            case spark::connect::Relation::kProject:
+            {
                 auto input = build_rel(rel.project().input());
-                std::vector<ast::ExprPtr> exprs{};
-                for (auto &e: rel.project().expressions()) {
-                    exprs.push_back(build_expr(e));
-                }
-                return std::make_unique<ast::Rel>(ast::UnresolvedProject{(std::move(input)), std::move(exprs)});
+                if (!input.ok()) return input.status();
+
+                auto input_cols = output_of(**input);
+
+                auto &p = rel.project().input();
+                return std::make_unique<Relation>(Project{});
             }
-            case sc::Relation::kFilter: {
-                auto input = build_rel(rel.filter().input());
-                auto cond = build_expr(rel.filter().condition());
-                return std::make_unique<ast::Rel>(ast::Filter{std::move(input), (std::move(cond))});
-            }
-            case sc::Relation::kJoin:
+            case spark::connect::Relation::kFilter:
                 break;
-            case sc::Relation::kSetOp:
+            case spark::connect::Relation::kJoin:
                 break;
-            case sc::Relation::kSort:
+            case spark::connect::Relation::kSetOp:
                 break;
-            case sc::Relation::kLimit:
+            case spark::connect::Relation::kSort:
                 break;
-            case sc::Relation::kAggregate:
+            case spark::connect::Relation::kLimit:
                 break;
-            case sc::Relation::kSql:
+            case spark::connect::Relation::kAggregate:
                 break;
-            case sc::Relation::kLocalRelation:
+            case spark::connect::Relation::kShowString:
                 break;
-            case sc::Relation::kSample:
+            case spark::connect::Relation::kUnknown:
                 break;
-            case sc::Relation::kOffset:
+            case spark::connect::Relation::REL_TYPE_NOT_SET:
                 break;
-            case sc::Relation::kDeduplicate:
-                break;
-            case sc::Relation::kRange:
-                break;
-            case sc::Relation::kSubqueryAlias:
-                break;
-            case sc::Relation::kRepartition:
-                break;
-            case sc::Relation::kToDf:
-                break;
-            case sc::Relation::kWithColumnsRenamed:
-                break;
-            case sc::Relation::kShowString: {
-                auto tree = build_rel(rel.show_string().input());
-                return tree;
-            }
-            case sc::Relation::kDrop:
-                break;
-            case sc::Relation::kTail:
-                break;
-            case sc::Relation::kWithColumns:
-                break;
-            case sc::Relation::kHint:
-                break;
-            case sc::Relation::kUnpivot:
-                break;
-            case sc::Relation::kToSchema:
-                break;
-            case sc::Relation::kRepartitionByExpression:
-                break;
-            case sc::Relation::kMapPartitions:
-                break;
-            case sc::Relation::kCollectMetrics:
-                break;
-            case sc::Relation::kParse:
-                break;
-            case sc::Relation::kGroupMap:
-                break;
-            case sc::Relation::kCoGroupMap:
-                break;
-            case sc::Relation::kWithWatermark:
-                break;
-            case sc::Relation::kApplyInPandasWithState:
-                break;
-            case sc::Relation::kHtmlString:
-                break;
-            case sc::Relation::kCachedLocalRelation:
-                break;
-            case sc::Relation::kCachedRemoteRelation:
-                break;
-            case sc::Relation::kCommonInlineUserDefinedTableFunction:
-                break;
-            case sc::Relation::kAsOfJoin:
-                break;
-            case sc::Relation::kCommonInlineUserDefinedDataSource:
-                break;
-            case sc::Relation::kWithRelations:
-                break;
-            case sc::Relation::kTranspose:
-                break;
-            case sc::Relation::kUnresolvedTableValuedFunction:
-                break;
-            case sc::Relation::kLateralJoin:
-                break;
-            case sc::Relation::kChunkedCachedLocalRelation:
-                break;
-            case sc::Relation::kRelationChanges:
-                break;
-            case sc::Relation::kNearestByJoin:
-                break;
-            case sc::Relation::kZip:
-                break;
-            case sc::Relation::kFillNa:
-                break;
-            case sc::Relation::kDropNa:
-                break;
-            case sc::Relation::kReplace:
-                break;
-            case sc::Relation::kSummary:
-                break;
-            case sc::Relation::kCrosstab:
-                break;
-            case sc::Relation::kDescribe:
-                break;
-            case sc::Relation::kCov:
-                break;
-            case sc::Relation::kCorr:
-                break;
-            case sc::Relation::kApproxQuantile:
-                break;
-            case sc::Relation::kFreqItems:
-                break;
-            case sc::Relation::kSampleBy:
-                break;
-            case sc::Relation::kCatalog:
-                break;
-            case sc::Relation::kMlRelation:
-                break;
-            case sc::Relation::kExtension:
-                break;
-            case sc::Relation::kUnknown:
-                break;
-            case sc::Relation::REL_TYPE_NOT_SET:
+            default:
                 break;
         }
-
-        return nullptr;
+        return absl::UnimplementedError("this spark relation is not implemented");
     }
 }
