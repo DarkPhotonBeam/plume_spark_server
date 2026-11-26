@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include <plume_spark/ast/common.hpp>
+#include "plume_spark/ast/common.hpp"
 #include "plume_spark/ast/expression.hpp"
 #include "plume_spark/catalog/data_source.hpp"
 

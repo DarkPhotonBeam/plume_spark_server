@@ -6,9 +6,8 @@
 #include <string>
 #include <absl/numeric/int128.h>
 
-#include "data_type.hpp"
-
-#include "common.hpp"
+#include "plume_spark/types/data_type.hpp"
+#include "plume_spark/ast/common.hpp"
 
 namespace plume_spark::ast {
 
@@ -58,30 +57,30 @@ namespace plume_spark::ast {
     using ExprNodeType = std::variant<Unary, Binary, Reference, Literal, Cast>;
 
     struct Expression {
-        DataType type;
+        plume_spark::types::DataType type;
         bool nullable;
         ExprNodeType node;
     };
 
     // factories:
     template <class T>
-    ExprPtr expr(T t, DataType type, bool nullable = true) {
+    ExprPtr expr(T t, types::DataType type, bool nullable = true) {
         return std::make_unique<Expression>(Expression{std::move(type), nullable, std::move(t)});
     }
 
     inline ExprPtr lit_i32(int32_t v) {
-        return expr(Literal{Value{v}}, DataType::int32());
+        return expr(Literal{Value{v}}, types::DataType::int32());
     }
     inline ExprPtr lit_i64(int64_t v) {
-        return expr(Literal{Value{v}}, DataType::int64());
+        return expr(Literal{Value{v}}, types::DataType::int64());
     }
     inline ExprPtr lit_string(std::string v) {
-        return expr(Literal{Value{v}}, DataType::string());
+        return expr(Literal{Value{v}}, types::DataType::string());
     }
     inline ExprPtr lit_f64(double v) {
-        return expr(Literal{Value{v}}, DataType::float64());
+        return expr(Literal{Value{v}}, types::DataType::float64());
     }
     inline ExprPtr lit_null() {
-        return expr(Literal{Value{}}, DataType::null());
+        return expr(Literal{Value{}}, types::DataType::null());
     }
 }

@@ -4,10 +4,9 @@
 #include <functional>
 #include <string>
 
-#include "plume_spark/ast/data_type.hpp"
+#include "plume_spark/types/data_type.hpp"
 
 namespace plume_spark::ast {
-
     struct ColumnId {
         uint64_t value;
 
@@ -17,13 +16,12 @@ namespace plume_spark::ast {
     struct OutputColumn {
         ColumnId id;
         std::string name;
-        DataType type;
+        types::DataType type;
         bool nullable;
     };
-
 }
 
-template <>
+template<>
 struct std::hash<plume_spark::ast::ColumnId> {
     size_t operator()(const plume_spark::ast::ColumnId &c) const noexcept {
         return std::hash<uint64_t>{}(c.value);

@@ -6,8 +6,9 @@
 #include <string>
 #include <type_traits>
 #include <arrow/type.h>
+#include <absl/status/statusor.h>
 
-namespace plume_spark::ast {
+namespace plume_spark::types {
 
     enum class TypeId { Null, Boolean, Int8, Int16, Int32, Int64, Float32, Float64, Decimal, String, Binary, Date, Timestamp, TimestampNtz, List, Struct, Map };
 

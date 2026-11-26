@@ -1,4 +1,4 @@
-#include <plume_spark/catalog/parquet.hpp>
+#include "plume_spark/catalog/parquet.hpp"
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -11,12 +11,12 @@
 #include <parquet/exception.h>
 #include <parquet/metadata.h>
 
-#include "plume/catalog/remote_resolver.hpp"
-#include "plume_spark/ast/data_type.hpp"
+#include <plume/catalog/remote_resolver.hpp>
+#include "plume_spark/types/data_type.hpp"
+#include "plume_spark/catalog/data_source.hpp"
 
 namespace plume_spark::catalog {
     namespace pc = plume::catalog;
-    namespace ast = plume_spark::ast;
 
     namespace {
         absl::StatusOr<std::shared_ptr<pc::RemoteParquetDataSource> >
@@ -49,24 +49,24 @@ namespace plume_spark::catalog {
         }
     }
 
-    absl::StatusOr<ast::DataType> to_ast_type(const arrow::DataType &t) {
+    absl::StatusOr<types::DataType> to_ast_type(const arrow::DataType &t) {
         switch (t.id()) {
             case arrow::Type::DICTIONARY: // pyarrow-written strings: use the value type
                 return to_ast_type(*static_cast<const arrow::DictionaryType &>(t).value_type());
-            case arrow::Type::NA: return ast::DataType::null();
-            case arrow::Type::BOOL: return ast::DataType::boolean();
-            case arrow::Type::INT8: return ast::DataType::int8();
-            case arrow::Type::INT32: return ast::DataType::int32();
-            case arrow::Type::INT64: return ast::DataType::int64();
-            case arrow::Type::FLOAT: return ast::DataType::float32();
-            case arrow::Type::DOUBLE: return ast::DataType::float64();
+            case arrow::Type::NA: return types::DataType::null();
+            case arrow::Type::BOOL: return types::DataType::boolean();
+            case arrow::Type::INT8: return types::DataType::int8();
+            case arrow::Type::INT32: return types::DataType::int32();
+            case arrow::Type::INT64: return types::DataType::int64();
+            case arrow::Type::FLOAT: return types::DataType::float32();
+            case arrow::Type::DOUBLE: return types::DataType::float64();
             case arrow::Type::STRING:
-            case arrow::Type::LARGE_STRING: return ast::DataType::string();
+            case arrow::Type::LARGE_STRING: return types::DataType::string();
             case arrow::Type::DECIMAL128: {
                 const auto &d = static_cast<const arrow::Decimal128Type &>(t);
-                return ast::DataType::decimal(static_cast<uint8_t>(d.precision()), static_cast<uint8_t>(d.scale()));
+                return types::DataType::decimal(static_cast<uint8_t>(d.precision()), static_cast<uint8_t>(d.scale()));
             }
-            case arrow::Type::TIMESTAMP: return ast::DataType::int64(); // todo: replace with actual timestamp type
+            case arrow::Type::TIMESTAMP: return types::DataType::int64(); // todo: replace with actual timestamp type
             // TIMESTAMP: tz set -> Spark TimestampType, no tz -> TimestampNTZType (needs DataType factories)
             default:
                 return absl::UnimplementedError(absl::StrCat("unsupported column type ", t.ToString()));
@@ -81,5 +81,17 @@ namespace plume_spark::catalog {
         if (!schema.ok()) return schema.status();
 
         return ResolvedParquet{*std::move(src), *std::move(schema)}; // 8: keep source
+    }
+
+    absl::StatusOr<std::shared_ptr<const DataSource>> DataSource::parquet(std::string name, std::vector<std::string> urls) {
+        auto src = resolve_with_plume(std::move(name), std::move(urls));
+        if (!src.ok()) return src.status();
+
+        auto schema = arrow_schema_from_footer((*src)->footer_bytes.at(0));
+        if (!schema.ok()) return schema.status();
+
+
+
+        return absl::UnimplementedError("parquet datasource not implemented");
     }
 }

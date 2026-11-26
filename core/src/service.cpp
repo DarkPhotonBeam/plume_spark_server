@@ -1,15 +1,16 @@
-#include <plume_spark/service.hpp>
+#include "plume_spark/service.hpp"
 #include <google/protobuf/text_format.h>
 #include <spdlog/spdlog.h>
 #include <grpcpp/grpcpp.h>
 #include <arrow/c/bridge.h>
 #include <arrow/record_batch.h>
+#include <absl/status/statusor.h>
 
 #include "plume_spark/config_defaults.hpp"
-#include "../include/plume_spark/util/uuid.hpp"
+#include "plume_spark/util/uuid.hpp"
 #include "plume_spark/ast_builder.hpp"
+#include "plume_spark/ast/expression.hpp"
 #include "plume_spark/util/casts.hpp"
-#include <plume_spark/ast/format.hpp>
 
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -108,9 +109,12 @@ to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, c
 
         AstBuilder ast_builder;
 
-        ast::RelPtr ast = ast_builder.build(root);;
+        auto ast = ast_builder.build(root);;
+        if (!ast.ok()) {
+            spdlog::error("building ast failed: {}", ast.status().ToString());
+            return util::to_grpc(ast.status());
+        }
         spdlog::debug("built ast");
-        spdlog::debug("tree:\n{}", *ast);
 
 
         /// CONVERSION STEP BEGIN

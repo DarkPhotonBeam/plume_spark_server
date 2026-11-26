@@ -1,4 +1,4 @@
-#include <plume_spark/util/plan_format.hpp>
+#include "plume_spark/util/plan_format.hpp"
 
 #include <algorithm>
 #include <chrono>

@@ -3,7 +3,7 @@
 #include <mutex>
 #include <string>
 
-#include "config_defaults.hpp"
+#include "plume_spark/config_defaults.hpp"
 
 namespace plume_spark {
     class Session {
