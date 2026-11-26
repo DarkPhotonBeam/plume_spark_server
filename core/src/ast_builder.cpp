@@ -78,7 +78,41 @@ namespace plume_spark {
                 return expr(Reference{(*c)->id}, (*c)->type, (*c)->nullable);
             }
             case spark::connect::Expression::kUnresolvedFunction:
+            {
+                auto &uf = exp.unresolved_function();
+                auto &name = uf.function_name();
+                auto n_args = uf.arguments_size();
+                if (n_args == 1) {
+                    // unary
+                    auto expr = build_expr(uf.arguments(0), scope);
+                    if (!expr.ok()) return expr.status();
+                }  else if (n_args == 2) {
+                    // binary
+                    auto op = BinOp::And;
+                    if (name == "AND") {
+                        op = BinOp::And;
+                    } else if (name == "<=") {
+                        op = BinOp::Lte;
+                    } else if (name == "<") {
+                        op = BinOp::Lt;
+                    } else if (name == ">=") {
+                        op = BinOp::Gte;
+                    }  else if (name == ">") {
+                        op = BinOp::Gt;
+                    } else {
+                        return absl::UnimplementedError(absl::StrCat("binop ", name, " not implemented"));
+                    }
+                    auto lhs = build_expr(uf.arguments(0), scope);
+                    if (!lhs.ok()) return lhs.status();
+                    auto rhs = build_expr(uf.arguments(1), scope);
+                    if (!rhs.ok()) return rhs.status();
+                    // todo: typecheck
+                    return expr(Binary{op, *std::move(lhs), *std::move(rhs)}, (*lhs)->type, (*lhs)->nullable);
+                } else {
+                    return absl::UnimplementedError("functions of this arity not implemented");
+                }
                 break;
+            }
             case spark::connect::Expression::kExpressionString:
                 break;
             case spark::connect::Expression::kUnresolvedStar:
