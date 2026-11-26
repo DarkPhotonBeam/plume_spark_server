@@ -20,7 +20,7 @@ namespace plume_spark::ast {
     using RelPtr = std::unique_ptr<Relation>;
 
     struct Read {
-        std::shared_ptr<catalog::DataSource> data_source;
+        std::shared_ptr<const catalog::DataSource> data_source;
         std::vector<OutputColumn> output;
     };
 

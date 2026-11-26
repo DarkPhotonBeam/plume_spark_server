@@ -32,5 +32,12 @@ namespace plume_spark {
         absl::StatusOr<ast::ExprPtr> build_expr(const ::spark::connect::Expression &exp, const Scope &scope);
         static absl::StatusOr<ast::ExprPtr> build_lit(const ::spark::connect::Expression_Literal &lit);
 
+        absl::StatusOr<std::vector<ast::OutputColumn>> generate_columns(const catalog::DataSource &src);
+
+        ast::ColumnId fresh_id() {
+            return ast::ColumnId{next_id_++};
+        }
+
+        uint64_t next_id_ = 0;
     };
 }

@@ -127,16 +127,38 @@ namespace plume_spark {
         return build_rel(root);
     }
 
-    absl::StatusOr<std::shared_ptr<catalog::DataSource>> get_data_source(const sc::Read_DataSource &ds) {
+    static absl::StatusOr<std::shared_ptr<const catalog::DataSource>> get_data_source(const sc::Read_DataSource &ds) {
         auto &format = ds.format();
+        std::vector<std::string> paths;
+        for (auto &p : ds.paths()) {
+            paths.push_back(p);
+        }
         if (format == "parquet") {
-
+            return catalog::DataSource::parquet(std::move(paths));
         }
         return absl::UnimplementedError("the data source format " + format + " is not supported");
     }
 
-    absl::StatusOr<std::vector<OutputColumn>> output_columns_from_data_source(const catalog::DataSource &src) {
-        return absl::UnimplementedError("output_columns_from_data_source");
+    absl::StatusOr<std::vector<OutputColumn>> AstBuilder::generate_columns(const catalog::DataSource &src) {
+        std::vector<OutputColumn> out;
+        for (const auto &[name, type, nullable] : src.schema()) {
+            out.push_back(OutputColumn{
+                .id = fresh_id(),
+                .name = name,
+                .type = type,
+                .nullable = nullable,
+            });
+        }
+        return out;
+    }
+
+    static absl::StatusOr<OutputColumn> column_by_id(const std::vector<OutputColumn> &columns, ColumnId id) {
+        for (auto col : columns) {
+            if (id == col.id) {
+                return col;
+            }
+        }
+        return absl::NotFoundError("column not found");
     }
 
     absl::StatusOr<RelPtr> AstBuilder::build_rel(const sc::Relation &rel) {
@@ -146,7 +168,7 @@ namespace plume_spark {
                 auto ds = get_data_source(rel.read().data_source());
                 if (!ds.ok()) return ds.status();
 
-                auto cols = output_columns_from_data_source(**ds);
+                auto cols = generate_columns(**ds);
                 if (!cols.ok()) return cols.status();
 
                 return std::make_unique<Relation>(Read{.data_source = *ds, .output = *cols});
@@ -158,11 +180,61 @@ namespace plume_spark {
 
                 auto input_cols = output_of(**input);
 
-                auto &p = rel.project().input();
-                return std::make_unique<Relation>(Project{});
+                const Scope scope{input_cols};
+
+                std::vector<NamedExpr> cols;
+                for (auto &e : rel.project().expressions()) {
+                    switch (e.expr_type_case()) {
+                        case sc::Expression::kAlias: // renamed expression
+                        {
+                            const auto &a = e.alias();
+                            if (a.name_size() != 1) {
+                                return absl::UnimplementedError("alias with multiple names");
+                            }
+                            auto built_expr = build_expr(a.expr(), scope);
+                            if (!built_expr.ok()) return built_expr.status();
+                            cols.push_back(NamedExpr{fresh_id(), a.name(0), *std::move(built_expr)});
+                            break;
+                        }
+                        case sc::Expression::kUnresolvedStar:
+                            if (e.unresolved_star().has_unparsed_target()) {
+                                return absl::UnimplementedError("qualified star");
+                            }
+                            for (const auto &c : input_cols) {
+                                cols.push_back({c.id, c.name, expr(Reference{c.id}, c.type, c.nullable)});
+                            }
+                            break;
+                        default: {
+                            auto built_expr = build_expr(e, scope);
+                            if (!built_expr.ok()) return built_expr.status();
+                            if (const auto *ref = std::get_if<Reference>(&(*built_expr)->node)) {
+                                const auto in = column_by_id(input_cols, ref->id);
+                                if (!in.ok()) return in.status();
+                                cols.push_back({in->id, in->name, *std::move(built_expr)});
+                            } else {
+                                return absl::UnimplementedError("todo: unnamed projection expressions");
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                return std::make_unique<Relation>(Project{.input = *std::move(input), .columns = std::move(cols)});
             }
-            case spark::connect::Relation::kFilter:
-                break;
+            case spark::connect::Relation::kFilter: {
+                auto input = build_rel(rel.filter().input());
+                if (!input.ok()) return input.status();
+
+                auto input_cols = output_of(**input);
+
+                auto built_cond = build_expr(rel.filter().condition(), Scope{input_cols});
+                if (!built_cond.ok()) return built_cond.status();
+                if ((*built_cond)->type != DataType::boolean()) {
+                    return absl::InvalidArgumentError("type error: filter condition is not a boolean");
+                }
+
+                return std::make_unique<Relation>(Filter{.input = *std::move(input), .condition = *std::move(built_cond)});
+            }
             case spark::connect::Relation::kJoin:
                 break;
             case spark::connect::Relation::kSetOp:
