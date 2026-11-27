@@ -38,6 +38,18 @@ namespace plume_spark::types {
         static DataType timestamp() { return DataType(TypeId::Timestamp); }
         static DataType timestamp_ntz() { return DataType(TypeId::TimestampNtz); }
 
+        [[nodiscard]] DataType element_type() const;
+
+        [[nodiscard]] uint8_t get_precision() const {
+            const auto *d = std::get_if<DecimalInfo>(&info_);
+            return d ? d->precision : 0;
+        }
+
+        [[nodiscard]] uint8_t get_scale() const {
+            const auto *d = std::get_if<DecimalInfo>(&info_);
+            return d ? d->scale : 0;
+        }
+
         [[nodiscard]] bool is_numeric() const {
             switch (id()) {
                 case TypeId::String:
@@ -133,6 +145,13 @@ namespace plume_spark::types {
         bool value_contains_null{};
         bool operator==(const MapInfo &) const = default;
     };
+
+    inline DataType DataType::element_type() const {
+        const auto *d = std::get_if<std::shared_ptr<const ListInfo>>(&info_);
+        if (!d) return null();
+        auto &dt = (**d);
+        return dt.element;
+    }
 
     inline bool DataType::operator==(const DataType &other) const {
         if (id_ != other.id_ || info_.index() != other.info_.index()) return false;

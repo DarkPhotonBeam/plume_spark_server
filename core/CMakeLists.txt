@@ -7,7 +7,8 @@ add_library(plume_spark_core
         src/session_manager.cpp
         src/config_defaults.cpp
         src/ast_builder.cpp
-        src/plume_builder.cpp
+        src/parser/builder.cpp
+        src/parser/translations.cpp
         src/util/uuid.cpp
         src/util/plan_format.cpp
         src/ast/relation.cpp

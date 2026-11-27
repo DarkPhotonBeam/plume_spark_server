@@ -16,7 +16,7 @@
 #include "duckdb/main/database.hpp"
 #include "plume/parser/compile.hpp"
 #include "plume/parser/converter.hpp"
-#include "plume_spark/plume_builder.hpp"
+#include "plume_spark/parser/builder.hpp"
 #include <cpr/cpr.h>
 
 #include "duckdb/common/arrow/arrow_converter.hpp"
@@ -124,7 +124,7 @@ to_record_batches(duckdb::Connection &con, plume::dandelion::DataSetVec &sets, c
         converter_config.filter_pushdown = false;
         converter_config.projection_pushdown = false;
 
-        PlumeBuilder builder(**ast, converter_config);
+        parser::PlumeBuilder builder(**ast, converter_config);
         auto plan_res = builder.convert();
         if (!plan_res.ok()) {
             spdlog::error("Building plume physical plan failed: {}", plan_res.status().ToString());

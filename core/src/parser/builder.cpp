@@ -1,4 +1,4 @@
-#include "plume_spark/plume_builder.hpp"
+#include "plume_spark/parser/builder.hpp"
 #include "plume/parser/plan_builder.hpp"
 #include "plume/execution/operators/projection.hpp"
 #include "plume/expression/expression.hpp"
@@ -6,9 +6,10 @@
 #include "plume/parser/converter.hpp"
 #include "plume_spark/util/casts.hpp"
 
-namespace plume_spark {
+namespace plume_spark::parser {
     namespace pp = plume::parser;
     namespace pe = plume::expr;
+    namespace pexe = plume::exec;
 
     uint32_t PlumeBuilder::split_count(uint64_t estimated_rows) const {
         if (cfg_.max_splits <= 1 || cfg_.target_rows_per_split == 0) {
@@ -38,6 +39,8 @@ namespace plume_spark {
             return absl::UnimplementedError("filter_pushdown is not implemented yet");
         }
 
+        std::map<ast::ColumnId, uint32_t> pos;
+
         plume::parser::PlanBuilder::SharedOpNode cur;
 
         plume::parser::LeafStage *leaf_stage;
@@ -50,6 +53,18 @@ namespace plume_spark {
             auto proj = std::make_shared<plume::exec::ProjectionTemplate>();
             for (uint32_t s = 0; s < schema_full.columns.size(); s++) {
                 const plume::Column &col = schema_full.columns[s];
+                std::optional<ast::ColumnId> found = std::nullopt;
+                for (auto c : r.output) {
+                    if (c.name != col.name) continue;
+                    if (found.has_value()) {
+                        return absl::InternalError(absl::StrCat("ambiguous column name mapping for '", col.name, "'"));
+                    }
+                    found = c.id;
+                }
+                if (!found.has_value()) {
+                    return absl::NotFoundError(absl::StrCat("no ColumnId found for '", col.name, "'"));
+                }
+                pos[found.value()] = s;
                 proj->projections.push_back(pe::ExprNode::Reference(s, col.type));
             }
             cur = builder_.After(std::move(cur), std::move(proj), schema_full);
@@ -58,15 +73,38 @@ namespace plume_spark {
 
         return Built{
             .node = cur,
+            .pos = std::move(pos),
         };
+    }
+
+    absl::StatusOr<PlumeBuilder::Built> PlumeBuilder::build_project(const ast::Project &p) {
+        auto prev = build(*p.input);
+        if (!prev.ok()) return prev.status();
+
+        auto t = std::make_shared<pexe::ProjectionTemplate>();
+        t->projections.reserve(p.columns.size());
+        for (auto &ne : p.columns) {
+
+        }
+
+        return absl::UnimplementedError("Project not implemented");
+    }
+
+    absl::StatusOr<PlumeBuilder::Built> PlumeBuilder::build_filter(const ast::Filter &f) {
+        auto prev = build(*f.input);
+        if (!prev.ok()) return prev.status();
+
+
+
+        return absl::UnimplementedError("Filter not implemented");
     }
 
     absl::StatusOr<PlumeBuilder::Built> PlumeBuilder::build(const ast::Relation &rel) {
         using R = absl::StatusOr<Built>;
         auto visitor = util::overloaded{
             [this](const ast::Read &r) -> R { return build_read(r); },
-            [](const ast::Project &) -> R { return absl::UnimplementedError("Project not implemented"); },
-            [](const ast::Filter &) -> R { return absl::UnimplementedError("Filter not implemented"); },
+            [this](const ast::Project &p) -> R { return build_project(p); },
+            [this](const ast::Filter &f) -> R { return build_filter(f); },
         };
         return std::visit(visitor, rel.node);
     }

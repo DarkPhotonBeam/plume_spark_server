@@ -4,7 +4,7 @@
 #include <plume/parser/converter.hpp>
 #include <plume/parser/physical_plan.hpp>
 
-namespace plume_spark {
+namespace plume_spark::parser {
 
     class PlumeBuilder {
     public:
@@ -20,6 +20,8 @@ namespace plume_spark {
         uint32_t split_count(uint64_t estimated_rows) const;
 
         absl::StatusOr<Built> build_read(const ast::Read &r);
+        absl::StatusOr<Built> build_project(const ast::Project &p);
+        absl::StatusOr<Built> build_filter(const ast::Filter &f);
 
         absl::StatusOr<Built> build(const ast::Relation &rel);
 
